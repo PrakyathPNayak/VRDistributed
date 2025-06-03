@@ -1,4 +1,4 @@
 *.pem
 /media
-/django_test/__pycache__
+*__pycache__*
 *.sqlite3
