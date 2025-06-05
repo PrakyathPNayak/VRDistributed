@@ -9,3 +9,9 @@ def test(request, *args, **kwargs):
 
 def test2(request, *args, **kwargs):
    return render(request, 'test.html')
+
+def media_image(request, filename):
+    """
+    Serve media images from the 'media' directory.
+    """
+    return render(request, 'media/' + filename)

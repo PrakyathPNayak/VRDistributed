@@ -47,9 +47,9 @@ def server_program():
         f.write(priv_key.save_pkcs1())
     with open("server_public.pem", "wb") as f:
         f.write(pub_key.save_pkcs1())"""
-    with open("server_public.pem", "rb") as f:
+    with open("server_public copy.pem", "rb") as f:
         pub_key = rsa.PublicKey.load_pkcs1(f.read())
-    with open("server_private.pem", "rb") as f:
+    with open("server_private copy.pem", "rb") as f:
         priv_key = rsa.PrivateKey.load_pkcs1(f.read())
 
     # UDP socket setup

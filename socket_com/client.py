@@ -56,7 +56,7 @@ def client_program():
 
     # Load server public key, have to look up how this usually happens
     try:
-        with open("server_public.pem", "rb") as f:
+        with open("server_public copy.pem", "rb") as f:
             pub_key = rsa.PublicKey.load_pkcs1(f.read())
     except FileNotFoundError:
         print("Error: server_public.pem not found.")

@@ -16,13 +16,16 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, re_path
 from django.urls import include
 from test_app.views import index
+from test_app.views import media_image
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", index),
     path("test/", include("test_app.urls")),
-    path('video/', include('stream.urls')),
+    path('video_test/', include('socket_test.urls', namespace='socket_test')),
+    path('stream/', include('stream.urls')),
+    re_path(r'^(?P<filename>[\w\-]+\.(jpg|png|gif|ico))$',media_image, name='media_image'),
 ]

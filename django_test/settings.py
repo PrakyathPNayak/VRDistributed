@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-spu79t8jmgc)$8f=87jnzs)p9h2vhskvadk!nc94$8dmv@++x!"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ['*'] # TODO: CHANGE IT LATER!! DO NOT ALLOW RANDOM HOSTS IN PRODUCTION
 
@@ -32,6 +32,9 @@ ALLOWED_HOSTS = ['*'] # TODO: CHANGE IT LATER!! DO NOT ALLOW RANDOM HOSTS IN PRO
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # For Daphne server support
+    "channels",  # For Django Channels support
+    "socket_test",  # Custom app for socket tests
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -53,6 +56,8 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "django_test.urls"
+
+ASGI_APPLICATION = "django_test.asgi.application"
 
 TEMPLATES = [
     {
@@ -123,3 +128,21 @@ STATIC_URL = "static/"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+}
