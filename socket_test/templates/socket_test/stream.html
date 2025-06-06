@@ -6,22 +6,23 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #f0f0f0;
+            background: #111;
+            color: #eee;
             margin: 0;
         }
         .container {
             max-width: 1200px;
             margin: 20px auto;
             padding: 20px;
-            background: white;
+            background: #222;
             border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
         }
         canvas {
             display: block;
             margin: 20px auto;
             background: black;
-            border: 2px solid #333;
+            border: 2px solid #555;
         }
         .controls, .quality-control {
             text-align: center;
@@ -40,7 +41,7 @@
             background: #0056b3;
         }
         button:disabled {
-            background: #ccc;
+            background: #666;
         }
         .status {
             text-align: center;
@@ -49,22 +50,12 @@
             border-radius: 5px;
         }
         .status.connected {
-            background: #d4edda;
-            color: #155724;
+            background: #155724;
+            color: #d4edda;
         }
         .status.error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        .debug {
-            margin-top: 20px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 5px;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
+            background: #721c24;
+            color: #f8d7da;
         }
     </style>
 </head>
@@ -72,12 +63,12 @@
     <div class="container">
         <h1>Secure Video Stream</h1>
         <div id="status" class="status">Connecting...</div>
-        <canvas id="canvas" width="960" height="540"></canvas>
+        <canvas id="canvas" width="1280" height="720"></canvas>
 
         <div class="controls">
-            <button id="pauseBtn" onclick="sendControl('pause')">Pause</button>
-            <button id="resumeBtn" onclick="sendControl('resume')" disabled>Resume</button>
-            <button id="disconnectBtn" onclick="disconnect()">Disconnect</button>
+            <button onclick="sendControl('pause')">Pause</button>
+            <button onclick="sendControl('resume')">Resume</button>
+            <button onclick="disconnect()">Disconnect</button>
         </div>
 
         <div class="quality-control">
@@ -86,8 +77,6 @@
             <span id="qualityValue">20</span>
             <button onclick="setQuality()">Apply</button>
         </div>
-
-        <div id="debug" class="debug"></div>
     </div>
 
     <script>
@@ -103,190 +92,197 @@
         qualityValue.textContent = qualitySlider.value;
     };
 
-    const updateStatus = (msg, type = '') => {
+    function updateStatus(msg, type = '') {
         statusDiv.textContent = msg;
         statusDiv.className = `status ${type}`;
-    };
+    }
 
-    const connect = () => {
-        const address = window.location.host;
-        const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-        const wsUrl = `${wsProtocol}://${window.location.host}/ws/stream/`;
+    function connect() {
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${protocol}://${window.location.host}/ws/stream/`;
         socket = new WebSocket(wsUrl);
         socket.binaryType = 'arraybuffer';
-        console.log('Connecting to WebSocket with address: ' + address);
 
         socket.onopen = () => {
             isConnected = true;
-            updateStatus('Connected, awaiting RSA key...', 'connected');
+            updateStatus("Connected. Awaiting RSA key...", 'connected');
         };
-        
+
         socket.onclose = () => {
-            updateStatus('Connection closed', 'error');
-            isConnected = streamReady = false;
-            document.getElementById('pauseBtn').disabled = true;
-            document.getElementById('resumeBtn').disabled = true;
+            updateStatus("Connection closed", 'error');
+            isConnected = false;
+            streamReady = false;
         };
-        
-        socket.onerror = (error) => {
-            updateStatus('WebSocket error occurred', 'error');
+
+        socket.onerror = () => {
+            updateStatus("WebSocket error", 'error');
         };
 
         socket.onmessage = async event => {
             if (typeof event.data === 'string') {
                 const msg = JSON.parse(event.data);
-                await handleControlMessage(msg);
+                await handleMessage(msg);
             } else {
                 await handleEncryptedFrame(event.data);
             }
         };
-    };
+    }
 
-    const base64Encode = buffer => btoa(String.fromCharCode(...buffer));
-    const base64Decode = str => new Uint8Array([...atob(str)].map(c => c.charCodeAt(0)));
+    function base64Encode(buffer) {
+        return btoa(String.fromCharCode(...buffer));
+    }
+
+    function base64Decode(str) {
+        return new Uint8Array([...atob(str)].map(c => c.charCodeAt(0)));
+    }
 
     async function performKeyExchange(encodedPem) {
-        try {
-            const pem = atob(encodedPem);
-            const encrypt = new JSEncrypt();
-            encrypt.setPublicKey(pem);
+        const pem = atob(encodedPem);
+        const encrypt = new JSEncrypt();
+        encrypt.setPublicKey(pem);
 
-            const aesKeyRaw = crypto.getRandomValues(new Uint8Array(32));
-            iv = crypto.getRandomValues(new Uint8Array(12));
+        const aesKeyRaw = crypto.getRandomValues(new Uint8Array(32));
+        iv = crypto.getRandomValues(new Uint8Array(12));
 
-            aesKey = await crypto.subtle.importKey(
-                'raw',
-                aesKeyRaw,
-                { name: 'AES-GCM' },
-                false,
-                ['decrypt']
-            );
+        aesKey = await crypto.subtle.importKey(
+            'raw', aesKeyRaw, { name: 'AES-GCM' }, false, ['decrypt']
+        );
 
-            const aesKeyB64 = btoa(String.fromCharCode(...aesKeyRaw));
-            const encryptedKey = encrypt.encrypt(aesKeyB64);
+        const aesKeyB64 = btoa(String.fromCharCode(...aesKeyRaw));
+        const encryptedKey = encrypt.encrypt(aesKeyB64);
 
-            if (!encryptedKey) throw new Error('RSA encryption failed');
+        socket.send(JSON.stringify({
+            type: 'aes_key_exchange',
+            encrypted_key: encryptedKey,
+            iv: base64Encode(iv)
+        }));
+    }
 
-            socket.send(JSON.stringify({
-                type: 'aes_key_exchange',
-                encrypted_key: encryptedKey,
-                iv: base64Encode(iv)
-            }));
-
-            updateStatus("Key exchange sent, waiting for camera...", 'connected');
-
-        } catch (err) {
-            updateStatus(`Key exchange failed: ${err.message}`, 'error');
+    async function handleMessage(msg) {
+        switch (msg.type) {
+            case 'rsa_public_key':
+                await performKeyExchange(msg.key);
+                break;
+            case 'stream_ready':
+                updateStatus("Streaming video...", 'connected');
+                streamReady = true;
+                break;
+            case 'status':
+                updateStatus(msg.message, 'connected');
+                break;
+            case 'error':
+                updateStatus(`Error: ${msg.message}`, 'error');
+                break;
         }
     }
-    const handleControlMessage = async msg => {
-        if (msg.type === 'rsa_public_key') {
-            await performKeyExchange(msg.key);
-        } 
-        else if (msg.type === 'stream_ready') {
-            updateStatus('Streaming video...', 'connected');
-            streamReady = true;
-            document.getElementById('pauseBtn').disabled = false;
-            document.getElementById('resumeBtn').disabled = true;
-        } 
-        else if (msg.type === 'status') {
-            updateStatus(msg.message, 'connected');
-            if (msg.message.includes('paused')) {
-                document.getElementById('pauseBtn').disabled = true;
-                document.getElementById('resumeBtn').disabled = false;
-            } else if (msg.message.includes('resumed')) {
-                document.getElementById('pauseBtn').disabled = false;
-                document.getElementById('resumeBtn').disabled = true;
-            }
-        } 
-        else if (msg.type === 'error') {
-            updateStatus(`Error: ${msg.message}`, 'error');
-        }
-    };
 
-    const handleEncryptedFrame = async (data) => {
+    async function handleEncryptedFrame(data) {
+        if (!aesKey || !streamReady) return;
+
+        const headerSize = 16;
+        const nonceSize = 12;
+        const tagSize = 16;
+
+        const header = new DataView(data, 0, headerSize);
+        const timestamp = header.getFloat64(0, true);
+        const sequence = header.getUint32(8, true);
+        const totalSize = header.getUint32(12, true);
+
+        if (data.byteLength !== headerSize + totalSize) return;
+
+        const nonce = data.slice(headerSize, headerSize + nonceSize);
+        const ciphertext = data.slice(headerSize + nonceSize, data.byteLength - tagSize);
+        const tag = data.slice(data.byteLength - tagSize);
+
+        const fullData = new Uint8Array(ciphertext.byteLength + tag.byteLength);
+        fullData.set(new Uint8Array(ciphertext), 0);
+        fullData.set(new Uint8Array(tag), ciphertext.byteLength);
+
         try {
-            if (!aesKey || !streamReady) {
-                return;
-            }
-
-            const headerSize = 16;
-            const nonceSize = 12;
-            const tagSize = 16;
-
-            if (data.byteLength <= headerSize + nonceSize + tagSize) {
-                return;
-            }
-
-            const headerView = new DataView(data, 0, headerSize);
-            const timestamp = headerView.getFloat64(0, true);
-            const sequence = headerView.getUint32(8, true);
-            const totalEncryptedSize = headerView.getUint32(12, true);
-
-            if (data.byteLength !== headerSize + totalEncryptedSize) {
-                return;
-            }
-
-            const frameNonce = data.slice(headerSize, headerSize + nonceSize);
-            const ciphertextSize = totalEncryptedSize - nonceSize - tagSize;
-            const ciphertext = data.slice(headerSize + nonceSize, headerSize + nonceSize + ciphertextSize);
-            const tag = data.slice(headerSize + nonceSize + ciphertextSize);
-
-            const encryptedDataWithTag = new Uint8Array(ciphertext.byteLength + tag.byteLength);
-            encryptedDataWithTag.set(new Uint8Array(ciphertext), 0);
-            encryptedDataWithTag.set(new Uint8Array(tag), ciphertext.byteLength);
-
             const decrypted = await crypto.subtle.decrypt({
                 name: "AES-GCM",
-                iv: frameNonce,
+                iv: nonce,
                 tagLength: 128
-            }, aesKey, encryptedDataWithTag);
+            }, aesKey, fullData);
 
+            // --- JPEG rendering ---
+            
             const blob = new Blob([decrypted], { type: 'image/jpeg' });
             const img = new Image();
             img.onload = () => {
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                 URL.revokeObjectURL(img.src);
             };
-            img.onerror = () => {
+            img.onerror = (e) => {
+                console.warn("Failed to load image", e);
                 URL.revokeObjectURL(img.src);
             };
             img.src = URL.createObjectURL(blob);
+            
+            /*
+            // --- H264 rendering using WebCodecs API ---
+            const decoder = new VideoDecoder({
+                output: frame => {
+                    ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+                    frame.close();
+                },
+                error: e => console.error(e)
+            });
+            decoder.configure({ codec: 'avc1.42E01E', width: 1280, height: 720 });
+            decoder.decode(new EncodedVideoChunk({
+                type: 'key',
+                timestamp,
+                data: new Uint8Array(decrypted)
+            }));*/
 
-        } catch (err) {
-            // Optionally handle decryption errors silently
+        } catch (e) {
+            console.warn("Decryption failed", e);
         }
-    };
+    }
 
-    const sendControl = action => {
+    function sendControl(type) {
         if (socket && isConnected) {
-            socket.send(JSON.stringify({ type: action }));
+            socket.send(JSON.stringify({ type }));
         }
-    };
+    }
 
-    const setQuality = () => {
-        if (socket && isConnected) {
-            const quality = parseInt(qualitySlider.value);
-            socket.send(JSON.stringify({
-                type: 'quality',
-                value: quality
-            }));
+    function setQuality() {
+        const value = parseInt(qualitySlider.value);
+        if (socket && isConnected && !isNaN(value)) {
+            socket.send(JSON.stringify({ type: 'quality', value }));
         }
-    };
+    }
 
-    const disconnect = () => {
+    function disconnect() {
         if (socket) {
             socket.send(JSON.stringify({ type: 'terminate' }));
             socket.close();
         }
-    };
+    }
+
+    // Throttle rate (ms) to reduce WebSocket load
+    let lastSentTime = 0;
+    const gyroInterval = 50;
+
+    window.addEventListener('deviceorientation', event => {
+        const now = Date.now();
+        if (!socket || !isConnected || now - lastSentTime < gyroInterval) return;
+        
+        const { alpha, beta, gamma } = event;
+
+        socket.send(JSON.stringify({
+            type: 'gyro',
+            alpha,
+            beta,
+            gamma,
+            timestamp: now
+        }));
+
+        lastSentTime = now;
+    }, true);
 
     window.onload = connect;
-    window.onbeforeunload = () => {
-        if (socket) {
-            socket.close();
-        }
-    };
-</script>
+    window.onbeforeunload = () => socket && socket.close();
+    </script>
 </body>
 </html>
