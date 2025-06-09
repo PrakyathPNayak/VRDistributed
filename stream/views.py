@@ -1,5 +1,6 @@
 import cv2
 from django.http import StreamingHttpResponse
+from django.shortcuts import render
 
 def generate_camera_stream():
     cap = cv2.VideoCapture(0)  # 0 = default webcam
@@ -22,3 +23,6 @@ def camera_feed(request):
         generate_camera_stream(),
         content_type='multipart/x-mixed-replace; boundary=frame'
     )
+    
+def mediapipe(request, *args, **kwargs):
+    return render(request, 'stream/mediapipe.html')

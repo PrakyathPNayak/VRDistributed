@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-spu79t8jmgc)$8f=87jnzs)p9h2vhskvadk!nc94$8dmv@++x!"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ['*'] # TODO: CHANGE IT LATER!! DO NOT ALLOW RANDOM HOSTS IN PRODUCTION
 
@@ -123,6 +123,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
+
+# Absolute path to the directory where collectstatic will collect static files
+STATIC_ROOT = BASE_DIR / "staticfiles"  
+
+# List of directories Django will look into for static files (besides apps)
+STATICFILES_DIRS = [
+    BASE_DIR / "socket_test" / "static",
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
