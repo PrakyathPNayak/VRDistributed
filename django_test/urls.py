@@ -32,5 +32,5 @@ urlpatterns = [
     path('stream/', include('stream.urls')),
     path('mediapipe/', mediapipe, name='mediapipe'),
     path('camera_feed/', camera_feed, name='camera_feed'),
-    re_path(r'^(?P<filename>[\w\-]+\.(jpg|png|gif|ico))$',media_image, name='media_image'),
+    re_path(r'^(?P<filename>[\w\-]+\.(jpg|png|gif|ico|mp4))$',media_image, name='media_image'),
 ]

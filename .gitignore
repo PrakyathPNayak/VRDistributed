@@ -7,3 +7,5 @@ staticfiles
 favicon.ico
 .vscode
 Ursina/Old
+notes
+.gitignore
