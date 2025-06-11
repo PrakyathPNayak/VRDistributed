@@ -277,107 +277,146 @@ class StreamingConsumer(AsyncWebsocketConsumer):
 
         logger.info("Cleanup completed")
 
-    async def receive(self, text_data=None, bytes_data=None):
+    def decrypt_message(self, encrypted_bytes: bytes) -> Optional[str]:
         '''
-        Handles incoming messages from the WebSocket and processes them based on their type.
-        This method handles the following message types:
-        - 'aes_key_exchange': Starts the camera stream by exchanging an AES key.
-        - 'pause': Pauses the video stream. 
-        - 'resume': Resumes the paused stream.
-        - 'quality': Adjusts the JPEG quality of the stream.
-        - 'terminate': Terminates the stream and closes the connection.
-        - Any other message type will result in an error message being sent back to the client.
+        Decrypts an AES-GCM encrypted message sent by the client.
+        Format: [12 bytes nonce][ciphertext + tag]
         '''
         try:
+            if not self.aes_key:
+                logger.error("AES key not set")
+                return None
+
+            nonce = encrypted_bytes[:12]
+            ciphertext_and_tag = encrypted_bytes[12:]
+
+            cipher = AES.new(self.aes_key, AES.MODE_GCM, nonce=nonce)
+            decrypted_data = cipher.decrypt_and_verify(
+                ciphertext_and_tag[:-16],  # ciphertext
+                ciphertext_and_tag[-16:]  # tag
+            )
+            return decrypted_data.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Decryption failed: {e}")
+            return None
+
+
+    async def receive(self, text_data=None, bytes_data=None):
+        try:
+            data = None
+
             if text_data:
-                data = json.loads(text_data)
-                msg_type = data.get('type')
+                try:
+                    # First try plaintext JSON
+                    data = json.loads(text_data)
+                except json.JSONDecodeError:
+                    # If that fails, treat it as encrypted Base64
+                    logger.info("Attempting to decrypt Base64-encoded text_data")
+                    encrypted_bytes = base64.b64decode(text_data)
+                    decrypted = self.decrypt_message(encrypted_bytes)
+                    if not decrypted:
+                        await self._send_error("Failed to decrypt text message")
+                        return
+                    data = json.loads(decrypted)
 
-                match msg_type:
-                    case 'aes_key_exchange':
-                        '''
-                        Starts the camera stream by exchanging an AES key.
-                        The client sends an encrypted AES key and IV, which the server decrypts
-                        using its private RSA key. The decrypted AES key is then used to encrypt
-                        the video stream.
-                        '''
-                        enc_key = base64.b64decode(data['encrypted_key'])
-                        iv = base64.b64decode(data['iv'])
-                        cipher = PKCS1_v1_5.new(self.priv_key)
-                        decrypted_key_b64 = cipher.decrypt(enc_key, None)
+            elif bytes_data:
+                decrypted = self.decrypt_message(bytes_data)
+                if not decrypted:
+                    await self._send_error("Failed to decrypt binary message")
+                    return
+                data = json.loads(decrypted)
 
-                        if decrypted_key_b64 is None:
-                            await self._send_error("AES decryption failed")
-                            return
+            if not data:
+                await self._send_error("No message data received")
+                return
 
-                        try:
-                            decrypted_key = base64.b64decode(decrypted_key_b64)
-                        except Exception as e:
-                            logger.error("Base64 decode error on decrypted key: %s", e)
-                            await self._send_error("Invalid decrypted AES key format")
-                            return
+            msg_type = data.get('type')
 
-                        if len(decrypted_key) > 32:
-                            self.aes_key = decrypted_key[:32]
-                        elif len(decrypted_key) in [16, 24, 32]:
-                            self.aes_key = decrypted_key
-                        else:
-                            self.aes_key = decrypted_key.ljust(32, b'\x00')
+            match msg_type:
+                case 'aes_key_exchange':
+                    '''
+                    Starts the camera stream by exchanging an AES key.
+                    The client sends an encrypted AES key and IV, which the server decrypts
+                    using its private RSA key. The decrypted AES key is then used to encrypt
+                    the video stream.
+                    '''
+                    enc_key = base64.b64decode(data['encrypted_key'])
+                    iv = base64.b64decode(data['iv'])
+                    cipher = PKCS1_v1_5.new(self.priv_key)
+                    decrypted_key_b64 = cipher.decrypt(enc_key, None)
 
-                        self.iv = iv
+                    if decrypted_key_b64 is None:
+                        await self._send_error("AES decryption failed")
+                        return
 
-                        if await self._initialize_camera():
-                            self.stream_task = asyncio.create_task(self._stream_video())
-                            await self.send(text_data=json.dumps({
-                                'type': 'stream_ready',
-                                'message': 'Video stream started'
-                            }))
-                        else:
-                            await self._send_error("Failed to initialize camera")
+                    try:
+                        decrypted_key = base64.b64decode(decrypted_key_b64)
+                    except Exception as e:
+                        logger.error("Base64 decode error on decrypted key: %s", e)
+                        await self._send_error("Invalid decrypted AES key format")
+                        return
 
-                    case 'pause':
-                        '''
-                        Just pauses the video stream. The camera will be closed. But the channel will remain open.
-                        The client can resume the stream later.
-                        '''
-                        self.running = False
-                        await self.send(text_data=json.dumps({'type': 'status', 'message': 'Stream paused!'}))
+                    if len(decrypted_key) > 32:
+                        self.aes_key = decrypted_key[:32]
+                    elif len(decrypted_key) in [16, 24, 32]:
+                        self.aes_key = decrypted_key
+                    else:
+                        self.aes_key = decrypted_key.ljust(32, b'\x00')
 
-                    case 'resume':
-                        '''
-                        Resumes the paused stream. The camera will be reopened if it was closed.
-                        '''
-                        if not self.running:
-                            logger.info("Resuming stream")
-                            self.running = True
-                            if not self.stream_task or self.stream_task.done():
-                                if await self._initialize_camera():
-                                    self.stream_task = asyncio.create_task(self._stream_video())
-                            await self.send(text_data=json.dumps({'type': 'status', 'message': 'Stream resumed'}))
+                    self.iv = iv
 
-                    case 'quality':
-                        '''
-                        Just adjusts the JPEG quality of the stream. Could probably be made dynamic based on the network conditions.
-                        '''
-                        value = data.get('value')
-                        if isinstance(value, int) and 1 <= value <= 100:
-                            self.jpeg_quality = value
-                            await self.send(text_data=json.dumps({'type': 'status', 'message': f'JPEG quality set to {value}'}))
-                        else:
-                            await self._send_error("Invalid quality value")
+                    if await self._initialize_camera():
+                        self.stream_task = asyncio.create_task(self._stream_video())
+                        await self.send(text_data=json.dumps({
+                            'type': 'stream_ready',
+                            'message': 'Video stream started'
+                        }))
+                    else:
+                        await self._send_error("Failed to initialize camera")
 
-                    case 'terminate':
-                        self.running = False
-                        await self._send_error("Stream terminated by client")
-                        await self.close()
-                    case 'gyro':
-                        alpha = data.get('alpha')
-                        beta = data.get('beta')
-                        gamma = data.get('gamma')
-                        timestamp = data.get('timestamp')
-                        logger.info(f"Gyroscope - α: {alpha:.2f}, β: {beta:.2f}, γ: {gamma:.2f}, t: {timestamp}")
-                    case _:
-                        await self._send_error("Unknown message type")
+                case 'pause':
+                    '''
+                    Just pauses the video stream. The camera will be closed. But the channel will remain open.
+                    The client can resume the stream later.
+                    '''
+                    self.running = False
+                    await self.send(text_data=json.dumps({'type': 'status', 'message': 'Stream paused!'}))
+
+                case 'resume':
+                    '''
+                    Resumes the paused stream. The camera will be reopened if it was closed.
+                    '''
+                    if not self.running:
+                        logger.info("Resuming stream")
+                        self.running = True
+                        if not self.stream_task or self.stream_task.done():
+                            if await self._initialize_camera():
+                                self.stream_task = asyncio.create_task(self._stream_video())
+                        await self.send(text_data=json.dumps({'type': 'status', 'message': 'Stream resumed'}))
+
+                case 'quality':
+                    '''
+                    Just adjusts the JPEG quality of the stream. Could probably be made dynamic based on the network conditions.
+                    '''
+                    value = data.get('value')
+                    if isinstance(value, int) and 1 <= value <= 100:
+                        self.jpeg_quality = value
+                        await self.send(text_data=json.dumps({'type': 'status', 'message': f'JPEG quality set to {value}'}))
+                    else:
+                        await self._send_error("Invalid quality value")
+
+                case 'terminate':
+                    self.running = False
+                    await self._send_error("Stream terminated by client")
+                    await self.close()
+                case 'gyro':
+                    alpha = data.get('alpha')
+                    beta = data.get('beta')
+                    gamma = data.get('gamma')
+                    timestamp = data.get('timestamp')
+                    logger.info(f"Gyroscope - α: {alpha:.2f}, β: {beta:.2f}, γ: {gamma:.2f}, t: {timestamp}")
+                case _:
+                    await self._send_error("Unknown message type")
 
         except Exception as e:
             logger.error(f"Receive error: {e}")

@@ -71,7 +71,7 @@ async function performKeyExchange(encodedPem) {
     aesKeyRaw,
     { name: "AES-GCM" },
     false,
-    ["decrypt"]
+    ["encrypt", "decrypt"]
   );
 
   const aesKeyB64 = btoa(String.fromCharCode(...aesKeyRaw));
@@ -174,24 +174,48 @@ async function handleEncryptedFrame(data) {
   }
 }
 
-function sendControl(type) {
-  if (socket && isConnected) {
-    socket.send(JSON.stringify({ type }));
+// --- Add encrypted message helper ---
+async function sendEncryptedMessage(messageObj) {
+  if (!aesKey || !iv || !isConnected) return;
+
+  const encoded = new TextEncoder().encode(JSON.stringify(messageObj));
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+
+  try {
+    const encrypted = await crypto.subtle.encrypt(
+      {
+        name: "AES-GCM",
+        iv: nonce,
+        tagLength: 128,
+      },
+      aesKey,
+      encoded
+    );
+
+    const nonceAndEncrypted = new Uint8Array(nonce.byteLength + encrypted.byteLength);
+    nonceAndEncrypted.set(nonce, 0);
+    nonceAndEncrypted.set(new Uint8Array(encrypted), nonce.byteLength);
+
+    socket.send(nonceAndEncrypted.buffer);
+  } catch (e) {
+    console.error("Failed to encrypt message:", e);
   }
+}
+
+function sendControl(type) {
+  sendEncryptedMessage({ type });
 }
 
 function setQuality() {
   const value = parseInt(qualitySlider.value);
-  if (socket && isConnected && !isNaN(value)) {
-    socket.send(JSON.stringify({ type: "quality", value }));
+  if (!isNaN(value)) {
+    sendEncryptedMessage({ type: "quality", value });
   }
 }
 
 function disconnect() {
-  if (socket) {
-    socket.send(JSON.stringify({ type: "terminate" }));
-    socket.close();
-  }
+  sendEncryptedMessage({ type: "terminate" });
+  socket.close();
 }
 
 // Throttle rate (ms) to reduce WebSocket load
